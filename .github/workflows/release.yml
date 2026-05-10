@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: wails/go.mod
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev mingw-w64
+
+      - name: Inject product version into wails.json
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          jq --arg v "$VERSION" '.info.productVersion = $v' wails/wails.json > wails/wails.json.tmp
+          mv wails/wails.json.tmp wails/wails.json
+
+      - name: Build Linux
+        working-directory: wails
+        run: go tool wails build -platform linux/amd64 -o flat-kanban-${{ github.ref_name }}
+
+      - name: Build Windows
+        working-directory: wails
+        run: go tool wails build -platform windows/amd64 -o flat-kanban-${{ github.ref_name }}.exe
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: binaries
+          path: |
+            wails/build/bin/flat-kanban-${{ github.ref_name }}
+            wails/build/bin/flat-kanban-${{ github.ref_name }}.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          name: binaries
+          path: dist/
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/flat-kanban-${{ github.ref_name }}
+            dist/flat-kanban-${{ github.ref_name }}.exe
+
+  pages:
+    runs-on: ubuntu-22.04
+
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    steps:
+        - uses: actions/checkout@v6
+
+        - name: Configure Pages
+          uses: actions/configure-pages@v6
+
+        - name: Prepare site directory
+          run: |
+            mkdir -p site
+            cp index.html site/index.html
+
+        - name: Upload Pages artifact
+          uses: actions/upload-pages-artifact@v5
+          with:
+            path: site
+
+        - name: Deploy to GitHub Pages
+          uses: actions/deploy-pages@v5
